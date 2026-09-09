@@ -51,11 +51,7 @@
     "children": [
       {
         "type": "paint",
-        "name": "Hand Painted Details",
-        "active_channels": [
-          "BaseColor",
-          "Roughness"
-        ]
+        "name": "Hand Painted Details"
       }
     ]
   }

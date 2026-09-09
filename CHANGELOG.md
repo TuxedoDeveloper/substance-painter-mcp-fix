@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## Unreleased
+
+- Preserve unrelated split Fill sources when assigning uniform values, resources, or anchors; use Painter's per-channel activation instead of resetting the entire channel mask.
+- Preserve uniform colors for explicit Fill channel-mask edits; skip unchanged masks and reject unsafe changes to non-uniform split sources. Per-channel edits reject material mode instead of discarding the shared material.
+- Reject Paint-layer active-channel edits and recipe fields that previously modified only temporary Python wrappers. Update examples and capability reporting accordingly.
+- Allow non-UDIM baking while retaining validation of disabled Texture Sets and empty UDIM tile selections.
+- Probe the actual bake-preset APIs instead of the nonexistent generic `BakingParameters.get` method.
+- Add executable-snippet regressions and a disposable-project live compatibility check.
+- Retain both edit and rollback errors if channel-mask recovery fails, explicitly report incomplete restoration, and test failures during retained-color restoration and both rollback steps.
+
 ## 1.0.0 - 2026-07-28
 
 Version 1.0.0 expands the server from 75 to 79 tools and completes the public Painter resource-ingestion workflow with persistent shelf support and observable indexing.

@@ -22,9 +22,15 @@ Every node accepts:
 | `visible` | boolean | Optional initial visibility. |
 | `mask` | object | Optional `Black` or `White` mask and enabled state. |
 
-Group nodes may contain a recursive `children` list. Fill nodes may contain `base_color`, `channels`, and `active_channels`. Paint nodes may contain `active_channels`.
+Group nodes may contain a recursive `children` list. Fill nodes may contain `base_color`, `channels`, and `active_channels`. Paint nodes do not accept `active_channels`: Painter's PaintLayerNode exposes no persistent channel-mask API. Such recipes are rejected locally before any nodes or backups are created.
 
 Scalar channel values are expanded to RGB uniform values. `Roughness`, `Metallic`, and `Emission` are resolved to the matching legacy or OpenPBR runtime channel.
+
+For an existing split-source Fill, individual value/resource/anchor assignments activate only the requested channel and preserve unrelated sources. Per-channel setters reject material-mode Fills rather than silently replacing a whole material; use `set_fill_parameters` for material parameters, or create a separate Fill.
+
+The explicit `set_active_channels` operation is different: Painter resets split sources when its mask changes. The server preserves retained uniform colors and skips unchanged masks. It rejects changed masks containing non-uniform split sources (bitmaps, procedural graphs, or anchors) before mutation, because rebuilding those sources could discard settings. Assign individual channel sources instead. Material-mode channel masks retain the shared material source.
+
+If an explicit channel-mask edit fails, the server attempts to restore the original mask and colors. If restoration also fails, the error reports both failures and explicitly marks restoration as incomplete. Inspect the layer or restore a project backup before continuing edits.
 
 ## Example
 

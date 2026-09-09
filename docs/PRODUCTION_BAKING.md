@@ -2,6 +2,10 @@
 
 Version 0.7 adds a guarded workflow around Painter's asynchronous baking API: assign approved mesh inputs, capture or apply a portable configuration, run a read-only preflight, start a batch, and inspect a persistent result manifest.
 
+Both non-UDIM and UVTile projects are supported. Non-UDIM Texture Sets have no tile-selection list; only UVTile Texture Sets require an enabled tile. Disabled Texture Sets remain rejected by `start_bake`; a batch may temporarily enable its explicitly selected sets and restore their original enablement afterward.
+
+The `baking_presets` capability checks the parameter accessors and setters used by capture/application, not a generic `get` method that Painter does not provide.
+
 ## 1. Approve baking mesh roots
 
 Set `SP_MCP_BAKE_MESH_ROOTS` in the MCP server environment. Multiple Windows roots are separated with semicolons.

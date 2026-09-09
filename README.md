@@ -44,7 +44,7 @@ Version **1.0.0** provides 79 focused MCP tools. It completes the guarded resour
 
 | Component | Supported / validated |
 |---|---|
-| Adobe Substance 3D Painter | Live-tested with 12.1.1 |
+| Adobe Substance 3D Painter | Upstream 12.1.1 validation; fork compatibility regressions verified on 12.1.4 (Windows) |
 | Painter Python API | Runtime reported 0.3.5 in the validated build |
 | Python | 3.10 or newer |
 | MCP Python SDK | `mcp>=1.28,<2` |
@@ -110,7 +110,7 @@ Painter builds may expose newer features while reporting an older API version st
 | `apply_fill_preset` | Apply a named preset exposed by the current procedural source. |
 | `set_fill_anchor_source` | Bind an Anchor Point to one Fill channel or the complete material. |
 | `set_fill_projection_advanced` | Configure UV, Triplanar, Planar, Spherical, or Cylindrical projection details. |
-| `set_active_channels` | Replace a Fill or Paint layer's active channel set. |
+| `set_active_channels` | Set a Fill layer's channel mask; preserve uniform colors and reject unsafe source resets. Paint layers are unsupported. |
 | `set_layer_mask` | Add, replace, or remove a White/Black mask. |
 | `insert_mask_effect` | Insert procedural or paint effects into a layer's mask stack. |
 | `set_layer_properties` | Set visibility and channel-specific opacity or blend mode. |
@@ -262,6 +262,22 @@ Resource import is independently disabled until `SP_MCP_RESOURCE_ROOTS` is confi
 The server is designed for local use. Do not expose Painter's remote-scripting port to untrusted networks.
 
 ## Testing and live validation
+
+The fork's compatibility fixes have 102 passing automated tests and were verified
+against Painter 12.1.4 on Windows. The targeted live check creates disposable
+Default and UVTile projects, tests source preservation and honest Paint-channel
+rejection, bakes and verifies maps, exports Unity URP textures, and restores the
+original project. It requires an idle Painter with a project open:
+
+```powershell
+.venv\Scripts\python.exe scripts\live_compatibility.py --mesh C:/Assets/example.fbx
+```
+
+On macOS use `.venv/bin/python` and the local mesh path. The check chooses a new
+temporary output folder unless `--output-root` is supplied, and prints its
+`results.json` location. Outputs are retained for inspection. These fixes have
+not yet been live-tested on macOS. See [channel safety limits](docs/RECIPES.md)
+before changing an existing Fill's complete channel mask.
 
 Run the automated suite:
 

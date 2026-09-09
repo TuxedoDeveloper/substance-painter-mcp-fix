@@ -98,7 +98,6 @@ def main() -> None:
                         {
                             "type": "paint",
                             "name": "Recipe Paint",
-                            "active_channels": ["BaseColor", "Roughness"],
                         },
                     ],
                 }
@@ -108,12 +107,11 @@ def main() -> None:
         created_group_uid = recipe["nodes"][0]["uid"]
         nodes = flatten(recipe["nodes"])
         fill = next(node for node in nodes if node["type"] == "FillLayerNode")
-        paint = next(node for node in nodes if node["type"] == "PaintLayerNode")
 
         emit(
             "active_channels",
             operations.set_active_channels(
-                paint["uid"], ["BaseColor", "Roughness", "Metallic"]
+                fill["uid"], ["BaseColor", "Roughness", "Metallic"]
             ),
         )
         emit(

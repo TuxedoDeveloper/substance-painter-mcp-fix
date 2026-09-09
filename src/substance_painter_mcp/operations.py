@@ -601,7 +601,13 @@ result = {
         "baking_parameter_editing": hasattr(baking.BakingParameters, "set"),
         "batch_baking": hasattr(baking, "bake_selected_textures_async"),
         "baking_mesh_inputs": hasattr(baking.BakingParameters, "set"),
-        "baking_presets": hasattr(baking.BakingParameters, "get"),
+        "baking_presets": all(callable(getattr(baking.BakingParameters, name, None)) for name in (
+            "from_texture_set", "common", "baker", "set", "is_textureset_enabled",
+            "get_enabled_bakers", "get_enabled_uv_tiles", "get_curvature_method",
+            "set_textureset_enabled", "set_enabled_bakers", "set_enabled_uv_tiles", "set_curvature_method",
+        )),
+        "fill_active_channels": hasattr(layerstack.FillLayerNode, "active_channels"),
+        "paint_active_channels": False,
         "resource_import": hasattr(resource, "import_project_resource"),
         "procedural_image_inputs": hasattr(source.SourceSubstance, "set_source"),
         "baking_resource_inputs": hasattr(baking.BakingParameters, "set"),
@@ -1359,7 +1365,8 @@ for name in requested:
         warnings.append({"code": "texture_set_disabled", "message": "Batch execution will enable it temporarily."})
     if not enabled_bakers:
         errors.append({"code": "no_enabled_bakers", "message": "No mesh-map bakers are enabled."})
-    if not enabled_tiles:
+    # Non-UDIM Texture Sets legitimately have no UV-tile selection.
+    if item.has_uv_tiles() and not enabled_tiles:
         errors.append({"code": "no_enabled_uv_tiles", "message": "No UV tiles are enabled for baking."})
     high_urls = common["HipolyMesh"].value().split("|") if common["HipolyMesh"].value() else []
     cage_url = common["CageMesh"].value()
@@ -1610,7 +1617,9 @@ if project.is_busy():
     raise RuntimeError("Painter is busy")
 target = textureset.TextureSet.from_name(params["texture_set"])
 bake_settings = baking.BakingParameters.from_texture_set(target)
-if not bake_settings.is_textureset_enabled() or not bake_settings.get_enabled_uv_tiles():
+if not bake_settings.is_textureset_enabled() or (
+    target.has_uv_tiles() and not bake_settings.get_enabled_uv_tiles()
+):
     raise RuntimeError(
         f"Texture Set is disabled for baking or has no enabled UV tiles: {params['texture_set']}"
     )
@@ -2220,11 +2229,12 @@ result = {
             raise ValueError("channels must not contain duplicates")
         code = '''
 import substance_painter.layerstack as layerstack
+import substance_painter.source as source
 import substance_painter.textureset as textureset
 
 node = layerstack.get_node_by_uid(params["uid"])
-if not isinstance(node, (layerstack.FillLayerNode, layerstack.PaintLayerNode)):
-    raise TypeError(f"Node {params['uid']} does not expose active channels")
+if not isinstance(node, layerstack.FillLayerNode):
+    raise TypeError("Active channel editing is only supported for Fill layers; Paint layers have no persistent active_channels API")
 
 aliases = {
     "Roughness": "SpecularRoughness",
@@ -2237,7 +2247,39 @@ for requested in params["channels"]:
     if not name or name not in textureset.ChannelType.__members__:
         raise ValueError(f"Unknown channel: {requested}")
     resolved.append(textureset.ChannelType.__members__[name])
-node.active_channels = set(resolved)
+requested = set(resolved)
+original = set(node.active_channels)
+if requested != original:
+    colors = {}
+    if node.source_mode.name == "Split":
+        # Painter resets split sources on a mask assignment. Only uniform
+        # sources can be restored completely without rebuilding their graphs.
+        for channel in original:
+            current = node.get_source(channel)
+            if not isinstance(current, source.SourceUniformColor):
+                raise NotImplementedError(
+                    "Cannot change the channel mask of a split Fill with non-uniform sources safely; assign individual channel sources instead"
+                )
+            colors[channel] = current.get_color()
+    try:
+        node.active_channels = requested
+        for channel in original & requested:
+            if channel in colors:
+                node.set_source(channel, colors[channel])
+    except Exception as edit_error:
+        try:
+            node.active_channels = original
+            for channel, color in colors.items():
+                node.set_source(channel, color)
+        except Exception as restore_error:
+            # The remote error message must retain both failures across serialization.
+            raise RuntimeError(
+                f"Active channel edit failed ({type(edit_error).__name__}: {edit_error}); "
+                f"rollback also failed ({type(restore_error).__name__}: {restore_error}). "
+                "Layer restoration is incomplete; inspect the layer or restore a project backup before further edits."
+            ) from edit_error
+        raise
+node = layerstack.get_node_by_uid(params["uid"])
 result = {
     "uid": node.uid(),
     "name": node.get_name(),
@@ -2387,14 +2429,13 @@ def create_items(items, parent=None):
         node.set_name(spec["name"])
         if "visible" in spec:
             node.set_visible(spec["visible"])
-        if isinstance(node, (layerstack.FillLayerNode, layerstack.PaintLayerNode)) and spec.get("active_channels"):
+        if isinstance(node, layerstack.FillLayerNode) and spec.get("active_channels"):
             node.active_channels = {resolve_channel(name) for name in spec["active_channels"]}
         if isinstance(node, layerstack.FillLayerNode):
             values = dict(spec.get("channels") or {})
             if spec.get("base_color") is not None:
                 values["BaseColor"] = spec["base_color"]
             if values:
-                node.active_channels = set(node.active_channels) | {resolve_channel(name) for name in values}
                 for name, color in values.items():
                     node.set_source(resolve_channel(name), colormanagement.Color(*color))
         mask = spec.get("mask")
@@ -3170,25 +3211,15 @@ if not params["material_mode"] and (
 ):
     raise ValueError(f"Unknown channel: {requested}")
 resolved = textureset.ChannelType.__members__[channel_name] if channel_name else None
-original_channels = set(node.active_channels)
-original_source = node.get_source(resolved) if resolved in original_channels else None
-try:
-    if params["material_mode"]:
-        source = node.set_material_source(resource_id)
-        resolved_channel = None
-    else:
-        node.active_channels = original_channels | {resolved}
-        source = node.set_source(resolved, resource_id)
-        resolved_channel = resolved.name
-except Exception:
-    if resolved is not None:
-        if original_source is not None:
-            try:
-                node.set_source(resolved, original_source)
-            except Exception:
-                pass
-        node.active_channels = original_channels
-    raise
+if params["material_mode"]:
+    source = node.set_material_source(resource_id)
+    resolved_channel = None
+else:
+    if node.source_mode.name != "Split":
+        raise ValueError("Per-channel edits require a split-source Fill; edit material parameters or create another layer")
+    # set_source activates this channel; assigning active_channels resets others.
+    source = node.set_source(resolved, resource_id)
+    resolved_channel = resolved.name
 verified_id = getattr(source, "resource_id", None)
 result = {
     "uid": node.uid(),
@@ -3534,19 +3565,9 @@ else:
     if not channel_name or channel_name not in textureset.ChannelType.__members__:
         raise ValueError(f"Unknown channel: {requested}")
     resolved = textureset.ChannelType.__members__[channel_name]
-    original_channels = set(node.active_channels)
-    original_source = node.get_source(resolved) if resolved in original_channels else None
-    try:
-        node.active_channels = original_channels | {resolved}
-        source = node.set_source(resolved, anchor)
-    except Exception:
-        if original_source is not None:
-            try:
-                node.set_source(resolved, original_source)
-            except Exception:
-                pass
-        node.active_channels = original_channels
-        raise
+    if node.source_mode.name != "Split":
+        raise ValueError("Per-channel edits require a split-source Fill; edit material parameters or create another layer")
+    source = node.set_source(resolved, anchor)
     resolved_channel = resolved.name
 result = {
     "uid": node.uid(),
@@ -3580,6 +3601,8 @@ import substance_painter.textureset as textureset
 node = layerstack.get_node_by_uid(params["uid"])
 if not isinstance(node, layerstack.FillLayerNode):
     raise TypeError(f"Node {params['uid']} is not a FillLayerNode")
+if node.source_mode.name != "Split":
+    raise ValueError("Per-channel edits require a split-source Fill; edit material parameters or create another layer")
 source = node.set_source(
     textureset.ChannelType.BaseColor,
     colormanagement.Color(*params["color"]),
@@ -3615,12 +3638,14 @@ import substance_painter.textureset as textureset
 node = layerstack.get_node_by_uid(params["uid"])
 if not isinstance(node, layerstack.FillLayerNode):
     raise TypeError(f"Node {params['uid']} is not a FillLayerNode")
+if node.source_mode.name != "Split":
+    raise ValueError("Per-channel edits require a split-source Fill; edit material parameters or create another layer")
 resolved = {}
 for name, color in params["values"].items():
     if name not in textureset.ChannelType.__members__:
         raise ValueError(f"Unknown channel: {name}")
     resolved[textureset.ChannelType.__members__[name]] = color
-node.active_channels = set(node.active_channels) | set(resolved)
+# set_source activates each requested channel without resetting unrelated sources.
 verified = {}
 for channel, color in resolved.items():
     source = node.set_source(channel, colormanagement.Color(*color))
@@ -4747,8 +4772,8 @@ result = {"uid": node.uid(), "layer": node.get_name(), "kind": params["kind"]}
                 active = item.get("active_channels") or []
                 if not isinstance(active, list) or any(not isinstance(value, str) for value in active):
                     raise ValueError("active_channels must be a list of strings")
-                if active and kind == "group":
-                    raise ValueError("active_channels are only valid for fill or paint items")
+                if "active_channels" in item and kind != "fill":
+                    raise ValueError("active_channels are only valid for Fill items; Paint channel editing is not supported")
                 mask = item.get("mask")
                 if mask is not None and not isinstance(mask, dict):
                     raise ValueError("mask must be an object")

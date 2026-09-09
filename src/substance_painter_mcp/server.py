@@ -559,7 +559,7 @@ def set_fill_channels(
 
 @mcp.tool()
 def set_active_channels(uid: int, channels: list[str]) -> dict[str, Any]:
-    """Replace a Fill or Paint layer's active channel set by UID."""
+    """Set a Fill's channels, preserving uniform colors; reject unsafe split resources and Paint nodes."""
     return operations.set_active_channels(uid, channels)
 
 
